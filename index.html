@@ -79,7 +79,6 @@
             border-color: #bf953f;
         }
 
-        /* Estilo para el botón de descarga */
         .btn-download {
             background: #222;
             color: #bf953f;
@@ -109,9 +108,12 @@
             <button onclick="window.showFolders()" class="text-yellow-500 font-bold uppercase text-xs">
                 <i class="fas fa-chevron-left mr-2"></i> Volver
             </button>
-            <button id="btn-add-content" onclick="window.openAdminModal()" class="hidden gold-bg text-black px-4 py-2 rounded-full font-bold text-[10px] uppercase shadow-lg hover:scale-105 transition-transform">
-                <i class="fas fa-plus mr-1"></i> Cargar Imagen
-            </button>
+            <div class="flex items-center gap-4">
+                <span id="sync-status" class="text-[8px] text-zinc-600 uppercase tracking-tighter italic">Sincronizado</span>
+                <button id="btn-add-content" onclick="window.openAdminModal()" class="hidden gold-bg text-black px-4 py-2 rounded-full font-bold text-[10px] uppercase shadow-lg hover:scale-105 transition-transform">
+                    <i class="fas fa-plus mr-1"></i> Cargar Imagen
+                </button>
+            </div>
         </nav>
 
         <!-- VISTA DE CARPETAS -->
@@ -140,7 +142,10 @@
 
         <!-- VISTA DE IMÁGENES -->
         <div id="images-view" class="hidden">
-            <h2 id="folder-title" class="text-xl font-bold mb-6 gold-gradient uppercase tracking-widest border-b border-zinc-800 pb-2">Categoría</h2>
+            <div class="flex justify-between items-center mb-6 border-b border-zinc-800 pb-2">
+                <h2 id="folder-title" class="text-xl font-bold gold-gradient uppercase tracking-widest">Categoría</h2>
+                <div id="loading-spinner" class="hidden text-yellow-500 animate-spin"><i class="fas fa-spinner"></i></div>
+            </div>
             <div id="images-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
         </div>
     </main>
@@ -162,9 +167,9 @@
             <h3 class="gold-gradient font-bold mb-4 uppercase tracking-widest">Nueva Publicación</h3>
             <div class="space-y-4">
                 <input type="text" id="img-name" placeholder="Título de la imagen" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
-                <input type="text" id="img-url" placeholder="Link de la imagen (Ej: https://web.com/foto.jpg)" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
-                <p class="text-[9px] text-zinc-500 px-1 italic">* Asegúrate que el link termine en .jpg, .png o .webp para que se vea bien.</p>
-                <button onclick="window.savePhoto()" id="btn-save-action" class="w-full gold-bg text-black font-bold py-3 rounded mt-2 uppercase text-sm tracking-widest shadow-lg">Cargar Imagen Ahora</button>
+                <input type="text" id="img-url" placeholder="Link directo (Ej: https://i.imgur.com/vHqB4lI.png)" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
+                <p class="text-[9px] text-zinc-500 px-1 italic">* Los links deben ser directos (terminar en .jpg o .png).</p>
+                <button onclick="window.savePhoto()" id="btn-save-action" class="w-full gold-bg text-black font-bold py-3 rounded mt-2 uppercase text-sm tracking-widest shadow-lg">Guardar en la Nube</button>
                 <button onclick="window.closeModal('admin-modal')" class="w-full text-zinc-500 text-[10px] mt-2 uppercase">Cancelar</button>
             </div>
         </div>
@@ -177,14 +182,64 @@
         <p class="text-[8px] text-zinc-800 mt-2">REY DE ASES &copy; 2026</p>
     </footer>
 
-    <script>
-        let isAdmin = false;
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Configuración inyectada por el entorno
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'rey-de-ases-v2';
+
+        let user = null;
+        let photos = [];
         let currentCategory = '';
-        let localData = JSON.parse(localStorage.getItem('rey_de_ases_data')) || [];
+        let isAdmin = false;
+
+        // 1. Autenticación Crítica (Regla 3)
+        const initAuth = async () => {
+            try {
+                // Siempre iniciamos sesión anónima para poder leer/escribir en Firestore
+                await signInAnonymously(auth);
+            } catch (e) {
+                console.error("Auth Error:", e);
+                document.getElementById('sync-status').innerText = "Error de conexión";
+            }
+        };
+        initAuth();
+
+        onAuthStateChanged(auth, (u) => {
+            user = u;
+            if (user) {
+                document.getElementById('sync-status').innerText = "Conectado a la Nube";
+                listenPhotos();
+            }
+        });
+
+        // 2. Escuchar la Nube (Regla 1 y 2)
+        function listenPhotos() {
+            if (!user) return;
+            // Usamos la ruta obligatoria para persistencia en este entorno
+            const photosRef = collection(db, 'artifacts', appId, 'public', 'data', 'photos');
+            
+            onSnapshot(photosRef, (snapshot) => {
+                photos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (currentCategory) renderPhotos();
+            }, (error) => {
+                console.error("Firestore Listen Error:", error);
+                document.getElementById('sync-status').innerText = "Error de sincronización";
+            });
+        }
+
+        // --- Funciones de Interfaz ---
 
         window.toggleAdminPanel = () => {
             if (isAdmin) {
-                if (confirm("¿Cerrar sesión?")) {
+                if (confirm("¿Cerrar sesión de administrador?")) {
                     isAdmin = false;
                     document.getElementById('admin-trigger').innerText = "Acceso Privado";
                     document.getElementById('btn-add-content').classList.add('hidden');
@@ -204,7 +259,9 @@
                 document.getElementById('admin-trigger').innerText = "MODO ADMIN ACTIVO";
                 if(currentCategory) document.getElementById('btn-add-content').classList.remove('hidden');
                 renderPhotos();
-            } else { alert("Error de acceso"); }
+            } else { 
+                alert("Usuario o contraseña incorrectos"); 
+            }
         };
 
         window.openFolder = (id, name) => {
@@ -228,29 +285,47 @@
         window.closeModal = (id) => document.getElementById(id).classList.add('hidden');
         window.openAdminModal = () => document.getElementById('admin-modal').classList.remove('hidden');
 
-        window.savePhoto = () => {
+        // 3. Guardar en la Nube (Regla 1)
+        window.savePhoto = async () => {
             const name = document.getElementById('img-name').value;
             const url = document.getElementById('img-url').value;
-            if(!name || !url) return alert("Por favor completa nombre y link");
             
-            localData.push({ id: Date.now(), name, url, category: currentCategory });
-            localStorage.setItem('rey_de_ases_data', JSON.stringify(localData));
-            
-            document.getElementById('img-name').value = "";
-            document.getElementById('img-url').value = "";
-            window.closeModal('admin-modal');
-            renderPhotos();
-        };
+            if(!name || !url) return alert("Por favor completa los campos");
+            if(!user) return alert("Aún no hay conexión con la nube. Reintenta en 2 segundos.");
 
-        window.deletePhoto = (id) => {
-            if(confirm("¿Eliminar esta imagen?")) {
-                localData = localData.filter(p => p.id !== id);
-                localStorage.setItem('rey_de_ases_data', JSON.stringify(localData));
-                renderPhotos();
+            document.getElementById('loading-spinner').classList.remove('hidden');
+            
+            try {
+                const photosRef = collection(db, 'artifacts', appId, 'public', 'data', 'photos');
+                await addDoc(photosRef, {
+                    name: name,
+                    url: url,
+                    category: currentCategory,
+                    createdAt: Date.now()
+                });
+                
+                document.getElementById('img-name').value = "";
+                document.getElementById('img-url').value = "";
+                window.closeModal('admin-modal');
+            } catch (e) {
+                console.error("Error guardando:", e);
+                alert("Error al guardar en la nube. Verifica que estés conectado.");
+            } finally {
+                document.getElementById('loading-spinner').classList.add('hidden');
             }
         };
 
-        // Función para descargar la imagen directamente
+        window.deletePhoto = async (id) => {
+            if(!isAdmin) return;
+            if(confirm("¿Eliminar imagen permanentemente de la nube?")) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'photos', id));
+                } catch (e) {
+                    alert("No se pudo eliminar de la nube.");
+                }
+            }
+        };
+
         window.downloadImage = async (url, filename) => {
             try {
                 const response = await fetch(url);
@@ -258,37 +333,39 @@
                 const blobUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = blobUrl;
-                a.download = filename || 'descarga-rey-de-ases';
+                a.download = filename || 'rey-de-ases';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(blobUrl);
             } catch (e) {
-                // Si falla la descarga directa (por permisos de la web original), abrir en nueva pestaña
                 window.open(url, '_blank');
             }
         };
 
         function renderPhotos() {
             const grid = document.getElementById('images-grid');
-            const photos = localData.filter(p => p.category === currentCategory);
+            // Filtrar y ordenar por fecha (más nuevos primero)
+            const categoryPhotos = photos
+                .filter(p => p.category === currentCategory)
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             
-            if (photos.length === 0) {
-                grid.innerHTML = '<div class="col-span-full text-center py-20 border border-zinc-900 rounded-3xl"><p class="text-zinc-700 uppercase text-[10px] tracking-widest">Sin contenido en esta carpeta</p></div>';
+            if (categoryPhotos.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center py-20 border border-zinc-900 rounded-3xl"><p class="text-zinc-700 uppercase text-[10px] tracking-widest">No hay imágenes en esta categoría</p></div>';
                 return;
             }
 
-            grid.innerHTML = photos.map(p => `
+            grid.innerHTML = categoryPhotos.map(p => `
                 <div class="image-card group">
                     <div class="aspect-square bg-zinc-900 flex items-center justify-center overflow-hidden">
-                        <img src="${p.url}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" onerror="this.src='https://placehold.co/400x400/111/bf953f?text=Error+en+Link'">
+                        <img src="${p.url}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" onerror="this.src='https://placehold.co/400x400/111/bf953f?text=Error+en+Link'">
                     </div>
                     <div class="p-4 bg-zinc-950 flex justify-between items-center">
                         <div class="truncate mr-2">
                             <span class="text-[10px] uppercase font-bold gold-gradient block truncate">${p.name}</span>
                         </div>
                         <div class="flex gap-2 shrink-0">
-                            ${isAdmin ? `<button onclick="window.deletePhoto(${p.id})" class="text-zinc-600 hover:text-red-500 p-1"><i class="fas fa-trash"></i></button>` : ''}
+                            ${isAdmin ? `<button onclick="window.deletePhoto('${p.id}')" class="text-zinc-600 hover:text-red-500 p-1"><i class="fas fa-trash"></i></button>` : ''}
                             <button onclick="window.downloadImage('${p.url}', '${p.name}')" class="btn-download px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase flex items-center gap-1">
                                 <i class="fas fa-download"></i> Bajar
                             </button>
