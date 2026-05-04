@@ -109,7 +109,7 @@
                 <i class="fas fa-chevron-left mr-2"></i> Volver
             </button>
             <div class="flex items-center gap-4">
-                <span id="sync-status" class="text-[8px] text-zinc-600 uppercase tracking-tighter italic">Sincronizado</span>
+                <span id="sync-status" class="text-[8px] text-zinc-600 uppercase tracking-tighter italic">Cargando Nube...</span>
                 <button id="btn-add-content" onclick="window.openAdminModal()" class="hidden gold-bg text-black px-4 py-2 rounded-full font-bold text-[10px] uppercase shadow-lg hover:scale-105 transition-transform">
                     <i class="fas fa-plus mr-1"></i> Cargar Imagen
                 </button>
@@ -188,50 +188,45 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Configuración inyectada por el entorno
         const firebaseConfig = JSON.parse(__firebase_config);
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'rey-de-ases-v2';
+        
+        const appId = "rey_de_ases_global_v1"; 
 
-        let user = null;
+        let userAuth = null;
         let photos = [];
         let currentCategory = '';
         let isAdmin = false;
 
-        // 1. Autenticación Crítica (Regla 3)
+        // 1. Iniciamos sesión anónima SIEMPRE para permitir lectura pública
         const initAuth = async () => {
             try {
-                // Siempre iniciamos sesión anónima para poder leer/escribir en Firestore
                 await signInAnonymously(auth);
             } catch (e) {
-                console.error("Auth Error:", e);
-                document.getElementById('sync-status').innerText = "Error de conexión";
+                console.error("Error Auth:", e);
             }
         };
         initAuth();
 
         onAuthStateChanged(auth, (u) => {
-            user = u;
-            if (user) {
-                document.getElementById('sync-status').innerText = "Conectado a la Nube";
+            userAuth = u;
+            if (userAuth) {
+                document.getElementById('sync-status').innerText = "Conectado";
                 listenPhotos();
             }
         });
 
-        // 2. Escuchar la Nube (Regla 1 y 2)
+        // 2. Escucha constante de la nube
         function listenPhotos() {
-            if (!user) return;
-            // Usamos la ruta obligatoria para persistencia en este entorno
             const photosRef = collection(db, 'artifacts', appId, 'public', 'data', 'photos');
-            
             onSnapshot(photosRef, (snapshot) => {
                 photos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Si el usuario está viendo una categoría, refrescamos la vista automáticamente
                 if (currentCategory) renderPhotos();
             }, (error) => {
-                console.error("Firestore Listen Error:", error);
-                document.getElementById('sync-status').innerText = "Error de sincronización";
+                console.error("Error Firestore:", error);
             });
         }
 
@@ -243,7 +238,7 @@
                     isAdmin = false;
                     document.getElementById('admin-trigger').innerText = "Acceso Privado";
                     document.getElementById('btn-add-content').classList.add('hidden');
-                    renderPhotos();
+                    renderPhotos(); // Re-render para quitar botones de borrar
                 }
             } else {
                 document.getElementById('login-modal').classList.remove('hidden');
@@ -258,10 +253,8 @@
                 window.closeModal('login-modal');
                 document.getElementById('admin-trigger').innerText = "MODO ADMIN ACTIVO";
                 if(currentCategory) document.getElementById('btn-add-content').classList.remove('hidden');
-                renderPhotos();
-            } else { 
-                alert("Usuario o contraseña incorrectos"); 
-            }
+                renderPhotos(); // Re-render para mostrar botones de borrar
+            } else { alert("Datos incorrectos"); }
         };
 
         window.openFolder = (id, name) => {
@@ -270,8 +263,10 @@
             document.getElementById('images-view').classList.remove('hidden');
             document.getElementById('nav-container').classList.remove('hidden');
             document.getElementById('folder-title').innerText = name;
+            
             if(isAdmin) document.getElementById('btn-add-content').classList.remove('hidden');
-            renderPhotos();
+            
+            renderPhotos(); // Renderiza las fotos inmediatamente (sea admin o no)
             window.scrollTo(0,0);
         };
 
@@ -285,31 +280,25 @@
         window.closeModal = (id) => document.getElementById(id).classList.add('hidden');
         window.openAdminModal = () => document.getElementById('admin-modal').classList.remove('hidden');
 
-        // 3. Guardar en la Nube (Regla 1)
         window.savePhoto = async () => {
             const name = document.getElementById('img-name').value;
             const url = document.getElementById('img-url').value;
+            if(!name || !url) return alert("Faltan datos");
             
-            if(!name || !url) return alert("Por favor completa los campos");
-            if(!user) return alert("Aún no hay conexión con la nube. Reintenta en 2 segundos.");
-
             document.getElementById('loading-spinner').classList.remove('hidden');
-            
             try {
                 const photosRef = collection(db, 'artifacts', appId, 'public', 'data', 'photos');
                 await addDoc(photosRef, {
-                    name: name,
-                    url: url,
+                    name,
+                    url,
                     category: currentCategory,
                     createdAt: Date.now()
                 });
-                
+                window.closeModal('admin-modal');
                 document.getElementById('img-name').value = "";
                 document.getElementById('img-url').value = "";
-                window.closeModal('admin-modal');
             } catch (e) {
-                console.error("Error guardando:", e);
-                alert("Error al guardar en la nube. Verifica que estés conectado.");
+                alert("Error al guardar en la nube");
             } finally {
                 document.getElementById('loading-spinner').classList.add('hidden');
             }
@@ -317,12 +306,11 @@
 
         window.deletePhoto = async (id) => {
             if(!isAdmin) return;
-            if(confirm("¿Eliminar imagen permanentemente de la nube?")) {
+            if(confirm("¿Eliminar esta imagen de la nube para todos?")) {
                 try {
-                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'photos', id));
-                } catch (e) {
-                    alert("No se pudo eliminar de la nube.");
-                }
+                    const photosRef = doc(db, 'artifacts', appId, 'public', 'data', 'photos', id);
+                    await deleteDoc(photosRef);
+                } catch (e) { alert("Error al borrar"); }
             }
         };
 
@@ -338,36 +326,32 @@
                 a.click();
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(blobUrl);
-            } catch (e) {
-                window.open(url, '_blank');
-            }
+            } catch (e) { window.open(url, '_blank'); }
         };
 
+        // Esta función ahora renderiza para TODOS, sin importar el login
         function renderPhotos() {
             const grid = document.getElementById('images-grid');
-            // Filtrar y ordenar por fecha (más nuevos primero)
-            const categoryPhotos = photos
+            const catPhotos = photos
                 .filter(p => p.category === currentCategory)
-                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                .sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
             
-            if (categoryPhotos.length === 0) {
-                grid.innerHTML = '<div class="col-span-full text-center py-20 border border-zinc-900 rounded-3xl"><p class="text-zinc-700 uppercase text-[10px] tracking-widest">No hay imágenes en esta categoría</p></div>';
+            if (catPhotos.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center py-20 opacity-20 uppercase text-[10px] tracking-widest">Categoría vacía</div>';
                 return;
             }
 
-            grid.innerHTML = categoryPhotos.map(p => `
+            grid.innerHTML = catPhotos.map(p => `
                 <div class="image-card group">
                     <div class="aspect-square bg-zinc-900 flex items-center justify-center overflow-hidden">
-                        <img src="${p.url}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" onerror="this.src='https://placehold.co/400x400/111/bf953f?text=Error+en+Link'">
+                        <img src="${p.url}" class="w-full h-full object-cover transition-transform group-hover:scale-110" loading="lazy">
                     </div>
                     <div class="p-4 bg-zinc-950 flex justify-between items-center">
-                        <div class="truncate mr-2">
-                            <span class="text-[10px] uppercase font-bold gold-gradient block truncate">${p.name}</span>
-                        </div>
-                        <div class="flex gap-2 shrink-0">
+                        <span class="text-[10px] uppercase font-bold gold-gradient truncate">${p.name}</span>
+                        <div class="flex gap-2">
                             ${isAdmin ? `<button onclick="window.deletePhoto('${p.id}')" class="text-zinc-600 hover:text-red-500 p-1"><i class="fas fa-trash"></i></button>` : ''}
-                            <button onclick="window.downloadImage('${p.url}', '${p.name}')" class="btn-download px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase flex items-center gap-1">
-                                <i class="fas fa-download"></i> Bajar
+                            <button onclick="window.downloadImage('${p.url}', '${p.name}')" class="btn-download px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase">
+                                <i class="fas fa-download"></i>
                             </button>
                         </div>
                     </div>
