@@ -78,6 +78,18 @@
         .image-card:hover {
             border-color: #bf953f;
         }
+
+        /* Estilo para el botón de descarga */
+        .btn-download {
+            background: #222;
+            color: #bf953f;
+            border: 1px solid #bf953f;
+            transition: all 0.2s;
+        }
+        .btn-download:hover {
+            background: #bf953f;
+            color: #000;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -150,7 +162,8 @@
             <h3 class="gold-gradient font-bold mb-4 uppercase tracking-widest">Nueva Publicación</h3>
             <div class="space-y-4">
                 <input type="text" id="img-name" placeholder="Título de la imagen" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
-                <input type="text" id="img-url" placeholder="Link de la imagen (URL)" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
+                <input type="text" id="img-url" placeholder="Link de la imagen (Ej: https://web.com/foto.jpg)" class="w-full p-3 bg-zinc-800 rounded border border-zinc-700 outline-none focus:border-yellow-600">
+                <p class="text-[9px] text-zinc-500 px-1 italic">* Asegúrate que el link termine en .jpg, .png o .webp para que se vea bien.</p>
                 <button onclick="window.savePhoto()" id="btn-save-action" class="w-full gold-bg text-black font-bold py-3 rounded mt-2 uppercase text-sm tracking-widest shadow-lg">Cargar Imagen Ahora</button>
                 <button onclick="window.closeModal('admin-modal')" class="w-full text-zinc-500 text-[10px] mt-2 uppercase">Cancelar</button>
             </div>
@@ -191,7 +204,7 @@
                 document.getElementById('admin-trigger').innerText = "MODO ADMIN ACTIVO";
                 if(currentCategory) document.getElementById('btn-add-content').classList.remove('hidden');
                 renderPhotos();
-            } else { alert("Error"); }
+            } else { alert("Error de acceso"); }
         };
 
         window.openFolder = (id, name) => {
@@ -202,6 +215,7 @@
             document.getElementById('folder-title').innerText = name;
             if(isAdmin) document.getElementById('btn-add-content').classList.remove('hidden');
             renderPhotos();
+            window.scrollTo(0,0);
         };
 
         window.showFolders = () => {
@@ -217,7 +231,7 @@
         window.savePhoto = () => {
             const name = document.getElementById('img-name').value;
             const url = document.getElementById('img-url').value;
-            if(!name || !url) return;
+            if(!name || !url) return alert("Por favor completa nombre y link");
             
             localData.push({ id: Date.now(), name, url, category: currentCategory });
             localStorage.setItem('rey_de_ases_data', JSON.stringify(localData));
@@ -229,10 +243,29 @@
         };
 
         window.deletePhoto = (id) => {
-            if(confirm("¿Borrar?")) {
+            if(confirm("¿Eliminar esta imagen?")) {
                 localData = localData.filter(p => p.id !== id);
                 localStorage.setItem('rey_de_ases_data', JSON.stringify(localData));
                 renderPhotos();
+            }
+        };
+
+        // Función para descargar la imagen directamente
+        window.downloadImage = async (url, filename) => {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const blobUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename || 'descarga-rey-de-ases';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(blobUrl);
+            } catch (e) {
+                // Si falla la descarga directa (por permisos de la web original), abrir en nueva pestaña
+                window.open(url, '_blank');
             }
         };
 
@@ -241,18 +274,24 @@
             const photos = localData.filter(p => p.category === currentCategory);
             
             if (photos.length === 0) {
-                grid.innerHTML = '<p class="col-span-full text-center py-20 text-zinc-600 uppercase text-[10px]">Vacío</p>';
+                grid.innerHTML = '<div class="col-span-full text-center py-20 border border-zinc-900 rounded-3xl"><p class="text-zinc-700 uppercase text-[10px] tracking-widest">Sin contenido en esta carpeta</p></div>';
                 return;
             }
 
             grid.innerHTML = photos.map(p => `
-                <div class="image-card">
-                    <img src="${p.url}" class="w-full aspect-square object-cover" onerror="this.src='https://placehold.co/400x400/111/bf953f?text=Error'">
-                    <div class="p-4 flex justify-between items-center">
-                        <span class="text-[10px] uppercase font-bold gold-gradient">${p.name}</span>
-                        <div class="flex gap-2">
-                            ${isAdmin ? `<button onclick="window.deletePhoto(${p.id})" class="text-red-500"><i class="fas fa-trash"></i></button>` : ''}
-                            <button onclick="window.open('${p.url}')" class="gold-bg text-black px-2 py-1 rounded text-[8px] font-bold">VER</button>
+                <div class="image-card group">
+                    <div class="aspect-square bg-zinc-900 flex items-center justify-center overflow-hidden">
+                        <img src="${p.url}" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" onerror="this.src='https://placehold.co/400x400/111/bf953f?text=Error+en+Link'">
+                    </div>
+                    <div class="p-4 bg-zinc-950 flex justify-between items-center">
+                        <div class="truncate mr-2">
+                            <span class="text-[10px] uppercase font-bold gold-gradient block truncate">${p.name}</span>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            ${isAdmin ? `<button onclick="window.deletePhoto(${p.id})" class="text-zinc-600 hover:text-red-500 p-1"><i class="fas fa-trash"></i></button>` : ''}
+                            <button onclick="window.downloadImage('${p.url}', '${p.name}')" class="btn-download px-3 py-1.5 rounded-lg text-[9px] font-bold uppercase flex items-center gap-1">
+                                <i class="fas fa-download"></i> Bajar
+                            </button>
                         </div>
                     </div>
                 </div>
