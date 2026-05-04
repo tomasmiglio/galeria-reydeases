@@ -185,7 +185,7 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = JSON.parse(__firebase_config);
@@ -193,19 +193,26 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         
-        const appId = "rey_de_ases_global_v1"; 
+        // El appId debe ser único y compartido para todos los dispositivos
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'rey_de_ases_global_2026'; 
 
         let userAuth = null;
         let photos = [];
         let currentCategory = '';
         let isAdmin = false;
 
-        // 1. Iniciamos sesión anónima SIEMPRE para permitir lectura pública
+        // 1. Iniciamos sesión anónima o con token para permitir lectura pública
         const initAuth = async () => {
             try {
-                await signInAnonymously(auth);
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
             } catch (e) {
                 console.error("Error Auth:", e);
+                // Reintento manual si falla
+                setTimeout(initAuth, 2000);
             }
         };
         initAuth();
@@ -213,20 +220,23 @@
         onAuthStateChanged(auth, (u) => {
             userAuth = u;
             if (userAuth) {
-                document.getElementById('sync-status').innerText = "Conectado";
+                document.getElementById('sync-status').innerText = "Nube Sincronizada";
                 listenPhotos();
             }
         });
 
         // 2. Escucha constante de la nube
         function listenPhotos() {
+            if (!userAuth) return;
             const photosRef = collection(db, 'artifacts', appId, 'public', 'data', 'photos');
+            
+            // Usamos un listener con callback de error para reintentar si la conexión parpadea
             onSnapshot(photosRef, (snapshot) => {
                 photos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // Si el usuario está viendo una categoría, refrescamos la vista automáticamente
                 if (currentCategory) renderPhotos();
             }, (error) => {
-                console.error("Error Firestore:", error);
+                console.error("Error Firestore Snapshot:", error);
+                document.getElementById('sync-status').innerText = "Error de Red";
             });
         }
 
@@ -238,7 +248,7 @@
                     isAdmin = false;
                     document.getElementById('admin-trigger').innerText = "Acceso Privado";
                     document.getElementById('btn-add-content').classList.add('hidden');
-                    renderPhotos(); // Re-render para quitar botones de borrar
+                    renderPhotos();
                 }
             } else {
                 document.getElementById('login-modal').classList.remove('hidden');
@@ -253,7 +263,7 @@
                 window.closeModal('login-modal');
                 document.getElementById('admin-trigger').innerText = "MODO ADMIN ACTIVO";
                 if(currentCategory) document.getElementById('btn-add-content').classList.remove('hidden');
-                renderPhotos(); // Re-render para mostrar botones de borrar
+                renderPhotos();
             } else { alert("Datos incorrectos"); }
         };
 
@@ -266,7 +276,7 @@
             
             if(isAdmin) document.getElementById('btn-add-content').classList.remove('hidden');
             
-            renderPhotos(); // Renderiza las fotos inmediatamente (sea admin o no)
+            renderPhotos();
             window.scrollTo(0,0);
         };
 
@@ -284,6 +294,7 @@
             const name = document.getElementById('img-name').value;
             const url = document.getElementById('img-url').value;
             if(!name || !url) return alert("Faltan datos");
+            if(!userAuth) return alert("Esperando conexión a la nube...");
             
             document.getElementById('loading-spinner').classList.remove('hidden');
             try {
@@ -298,7 +309,7 @@
                 document.getElementById('img-name').value = "";
                 document.getElementById('img-url').value = "";
             } catch (e) {
-                alert("Error al guardar en la nube");
+                alert("Error al guardar: Verifique su conexión");
             } finally {
                 document.getElementById('loading-spinner').classList.add('hidden');
             }
@@ -329,7 +340,6 @@
             } catch (e) { window.open(url, '_blank'); }
         };
 
-        // Esta función ahora renderiza para TODOS, sin importar el login
         function renderPhotos() {
             const grid = document.getElementById('images-grid');
             const catPhotos = photos
